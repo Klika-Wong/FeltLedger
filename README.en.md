@@ -12,7 +12,8 @@ python app.py
 
 Open <http://127.0.0.1:8765/>. The server listens only on `127.0.0.1`.
 
-1. Set 2–9 seats, the button, your seat, blinds, optional ante, and **total table chips**. Distribute the total evenly or edit each stack; the stack sum must match the table total.
+1. Set 2–9 seats, the button, your seat, blinds, and optional ante. Enter a **starting stack per player** to fill every seat; edit individual seats when their actual stacks differ. The table total is calculated automatically and checked by the rules engine at hand start.
+   The per-player starting amount is only a shortcut. Each seat uses its actual stack, and the next hand carries over the settled balances.
 2. Record the current player's actual action in turn: fold, check, call, raise to a total amount, or all-in. The table shows current-street bets, pot, stacks, and legal raise limits. Enter three new cards on the flop and one each on the turn and river. Opponents can act on every betting street.
 3. Enter only hole cards you actually know; unknown cards stay hidden. Click an opponent's seat name, such as “对手5”, to select a previously saved real-world opponent or create a new name, style, and note. The association carries into the next hand. When you meet that player in another session, select and edit the same profile again.
 4. The hand ends immediately when only one player remains. At showdown, the app can rank known hands and distribute side pots if every remaining hand is known. Otherwise, enter the actual payouts observed at the table. Manual payouts are checked for their total only; side-pot eligibility is not verified.

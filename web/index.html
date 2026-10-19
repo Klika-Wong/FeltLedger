@@ -60,13 +60,15 @@
           <label>小盲<input id="sb" type="number" min="0.01" step="0.01" value="0.5"></label>
           <label>大盲<input id="bb" type="number" min="0.01" step="0.01" value="1"></label>
           <label>前注<input id="ante" type="number" min="0" step="0.01" value="0"></label>
-          <label>牌桌总筹码<input id="total-chips" type="number" min="0.01" step="0.01" value="300"></label>
-          <button class="secondary" id="distribute">按人数均分</button>
+          <label>每人初始筹码<input id="initial-stack" type="number" min="0.01" step="0.01" value="100"></label>
+          <button class="secondary" id="apply-stack">填入所有座位</button>
+          <label>牌桌筹码合计（自动）<input id="total-chips" type="number" value="300" readonly></label>
           <label>我的座位<select id="hero-seat"></select></label>
           <label>庄位（BTN）<select id="button-seat"></select></label>
         </div>
         <div id="setup-seats"></div>
         <p class="muted small" id="stack-sum"></p>
+        <p class="muted small">默认所有人使用相同初始筹码；若现场筹码不同，只改下方对应座位。合计会自动更新。</p>
         <button id="start">开始记录本手</button>
         <small>真实桌面的牌和行动由你逐步输入；重设牌桌会覆盖当前未完成的手牌。</small>
       </section>
@@ -181,26 +183,34 @@
     function setupRows() {
       const n = Number($('count').value);
       const old = [...$('setup-seats').querySelectorAll('.setup-row')].map(row => ({name:row.querySelector('.name').value,stack:row.querySelector('.stack').value}));
+      const previousHero=$('hero-seat').value,previousButton=$('button-seat').value;
       $('setup-seats').replaceChildren();
       $('hero-seat').replaceChildren(); $('button-seat').replaceChildren();
       for (let i=0;i<n;i++) {
         const row = document.createElement('div'); row.className='setup-row';
-        const name=document.createElement('input'); name.className='name'; name.type='text'; name.maxLength=40; name.value=old[i]?.name || (i===0?'我':`对手${i}`);
-        const stack=document.createElement('input'); stack.className='stack'; stack.type='number'; stack.step='0.01'; stack.min='0.01'; stack.value=old[i]?.stack || '100';
+        const name=document.createElement('input'); name.className='name'; name.type='text'; name.maxLength=40; name.value=old[i]?.name ?? (i===0?'我':`对手${i}`);
+        const stack=document.createElement('input'); stack.className='stack'; stack.type='number'; stack.step='0.01'; stack.min='0.01'; stack.value=old[i]?.stack ?? $('initial-stack').value;
         row.append(`座位 ${i+1}　昵称 `,name,'　筹码 ',stack); $('setup-seats').append(row);
         stack.oninput=updateStackSum;
         $('hero-seat').add(new Option(`座位 ${i+1}`,i)); $('button-seat').add(new Option(`座位 ${i+1}`,i));
       }
+      if(previousHero!==''&&Number(previousHero)<n)$('hero-seat').value=previousHero;
+      if(previousButton!==''&&Number(previousButton)<n)$('button-seat').value=previousButton;
       updateStackSum();
     }
     function updateStackSum() {
-      const sum=[...$('setup-seats').querySelectorAll('.stack')].reduce((total,input)=>total+(Number(input.value)||0),0);
-      $('stack-sum').textContent=`当前座位合计 ${sum.toFixed(2)}；开局时必须等于牌桌总筹码 ${Number($('total-chips').value||0).toFixed(2)}。`;
+      const values=[...$('setup-seats').querySelectorAll('.stack')].map(input=>input.value);
+      if(values.some(value=>!/^\d+(\.\d{1,2})?$/.test(value)||Number(value)<=0)){
+        $('total-chips').value='';$('stack-sum').textContent='请为每个座位填写大于 0、最多两位小数的初始筹码。';return;
+      }
+      const cents=values.reduce((sum,value)=>sum+Math.round(Number(value)*100),0);
+      $('total-chips').value=(cents/100).toFixed(2);
+      $('stack-sum').textContent=`${values.length} 人 · 牌桌合计 ${(cents/100).toFixed(2)}。`;
     }
     function fillSetupFromState() {
       $('count').value=state.players.length; setupRows();
       $('sb').value=fmt(state.small_blind); $('bb').value=fmt(state.big_blind); $('ante').value=fmt(state.ante);
-      $('total-chips').value=fmt(state.table_total);
+      $('initial-stack').value=fmt(state.phase==='complete'?state.players[0].stack:state.players[0].start_stack);
       $('hero-seat').value=state.hero; $('button-seat').value=state.button;
       [...$('setup-seats').querySelectorAll('.setup-row')].forEach((row,i)=>{ row.querySelector('.name').value=state.players[i].name; row.querySelector('.stack').value=fmt(state.phase==='complete'?state.players[i].stack:state.players[i].start_stack); });
       updateStackSum();
@@ -317,16 +327,13 @@
       $('top-status').textContent=`本手 ${state.id.slice(0,8)} · ${streetName[state.street]} · ${phaseName[state.phase]}`;
     }
     for(let i=2;i<=9;i++)$('count').add(new Option(`${i} 人`,i));$('count').value='3';
-    $('count').onchange=()=>{setupRows();$('distribute').click();};setupRows();
-    $('total-chips').oninput=updateStackSum;
-    $('distribute').onclick=()=>{
+    $('count').onchange=setupRows;setupRows();
+    $('apply-stack').onclick=()=>{
       const inputs=[...$('setup-seats').querySelectorAll('.stack')];
-      const total=Math.round(Number($('total-chips').value)*100);
-      if(!Number.isSafeInteger(total)||total<inputs.length){showMessage('总筹码至少应为每人 0.01',true);return;}
-      const each=Math.floor(total/inputs.length);
-      inputs.forEach((input,i)=>input.value=((each+(i<total%inputs.length?1:0))/100).toFixed(2));
+      inputs.forEach(input=>input.value=$('initial-stack').value);
       updateStackSum();
     };
+    $('initial-stack').onchange=()=>$('apply-stack').click();
     $('start').onclick=async()=>{
       selectedSeat=null;$('profile-section').hidden=true;
       const payload={players:[...$('setup-seats').querySelectorAll('.setup-row')].map(row=>({name:row.querySelector('.name').value,stack:row.querySelector('.stack').value})),

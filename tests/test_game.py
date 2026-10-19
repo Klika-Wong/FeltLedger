@@ -37,6 +37,7 @@ class GameTest(unittest.TestCase):
         following = next_hand(game)
         self.assertEqual(following["button"], 1)
         self.assertEqual(following["board"], [])
+        self.assertEqual([p["start_stack"] for p in following["players"]], [10100, 9900])
 
     def test_fold_wins_without_board(self):
         game = table()
@@ -88,6 +89,28 @@ class GameTest(unittest.TestCase):
         config["total_chips"] = 99
         with self.assertRaises(ValueError):
             start(config)
+
+    def test_equal_starting_stacks_and_next_hand_keep_total_chips(self):
+        config = {"players": [{"name": f"P{i}", "stack": 100} for i in range(3)],
+                  "button": 0, "hero": 0, "small_blind": 0.5, "big_blind": 1,
+                  "ante": 0.1, "total_chips": 300}
+        game = start(config)
+        self.assertEqual(game["table_total"], 30000)
+        self.assertEqual(sum(p["stack"] + p["committed"] for p in game["players"]), 30000)
+        act(game, "fold")
+        act(game, "fold")
+        self.assertEqual(game["phase"], "complete")
+        self.assertEqual(sum(p["stack"] for p in game["players"]), 30000)
+        following = next_hand(game)
+        self.assertEqual(following["table_total"], 30000)
+        self.assertEqual(sum(p["stack"] + p["committed"] for p in following["players"]), 30000)
+
+    def test_unequal_starting_stacks_use_their_actual_sum(self):
+        game = start({"players": [{"name": "P0", "stack": 20}, {"name": "P1", "stack": 50},
+                                  {"name": "P2", "stack": 100}], "button": 2, "hero": 0,
+                      "small_blind": 0.5, "big_blind": 1, "total_chips": 170})
+        self.assertEqual(game["table_total"], 17000)
+        self.assertEqual([p["start_stack"] for p in game["players"]], [2000, 5000, 10000])
 
     def test_opponent_can_bet_and_raise_each_street(self):
         game = table((100, 100, 100), button=0)
