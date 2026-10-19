@@ -1,8 +1,9 @@
-"""Local-only HTTP app for the poker decision prototype."""
+"""Local HTTP API for hand-recording research and experiments."""
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from copy import deepcopy
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 import json
 import os
 import tempfile
@@ -10,13 +11,16 @@ import threading
 
 from poker import advise
 import game
+import storage
+import policy
 
 
 ROOT = Path(__file__).resolve().parent
-DATA = ROOT / "data"
+DATA = Path(os.environ.get("FELTLEDGER_DATA_DIR", ROOT / "data")).expanduser().resolve()
 PROFILES = DATA / "profiles.json"
 GAME_FILE = DATA / "current_game.json"
 HAND_HISTORY = DATA / "hands.jsonl"
+ARCHIVE_DB = DATA / "archive.sqlite3"
 UNDO_FILE = DATA / "undo.json"
 PROFILE_LOCK = threading.Lock()
 SESSIONS = {}
@@ -78,7 +82,7 @@ def load_profiles():
 
 
 def save_profiles(profiles):
-    DATA.mkdir(exist_ok=True)
+    DATA.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=DATA, delete=False) as file:
         json.dump(profiles, file, ensure_ascii=False, indent=2)
         temp = file.name
@@ -92,7 +96,7 @@ def load_game():
 
 
 def save_game(state):
-    DATA.mkdir(exist_ok=True)
+    DATA.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=DATA, delete=False) as file:
         json.dump(state, file, ensure_ascii=False, indent=2)
         temp = file.name
@@ -171,15 +175,13 @@ def game_command(path, payload):
                 if current["phase"] != "complete":
                     raise ValueError("本手未结束")
                 state = game.next_hand(state)
-                record_game_profiles(current)
-                DATA.mkdir(exist_ok=True)
-                with HAND_HISTORY.open("a", encoding="utf-8") as file:
-                    file.write(json.dumps(current, ensure_ascii=False) + "\n")
+                if storage.archive_hand(ARCHIVE_DB, current):
+                    record_game_profiles(current)
                 UNDO_FILE.unlink(missing_ok=True)
             else:
                 raise ValueError("未知操作")
             if path != "/api/game/next":
-                DATA.mkdir(exist_ok=True)
+                DATA.mkdir(parents=True, exist_ok=True)
                 UNDO_FILE.write_text(json.dumps(current, ensure_ascii=False), encoding="utf-8")
         save_game(state)
     return game_view(state)
@@ -187,22 +189,22 @@ def game_command(path, payload):
 
 def game_advice():
     state = load_game()
-    if state is None:
-        raise ValueError("请先设置牌桌")
-    choice = game.legal(state)
-    hero = state["hero"]
-    if choice is None or choice["seat"] != hero:
-        raise ValueError("仅在轮到我的座位时计算建议")
-    cards = state["players"][hero]["cards"]
+    profiles = load_profiles()
+    observed = policy.observation(state, profiles)
+    choice = observed["legal"]
+    cards = observed["hero_cards"]
     if len(cards) != 2:
         raise ValueError("请先录入我的两张底牌")
-    opponents = [p for i, p in enumerate(state["players"]) if i != hero and not p["folded"]]
-    profiles = load_profiles()
-    styles = [profiles.get(p["name"], {}).get("style", "unknown") for p in opponents]
-    styles = [style if style != "unknown" else inferred_style(profiles.get(p["name"], {}))
-              for style, p in zip(styles, opponents)]
-    result = advise({"hero": cards, "board": state["board"], "opponents": len(opponents),
-                     "pot": game.pot(state) / 100, "call": choice["to_call"] / 100,
+    opponents = [seat for seat in observed["seats"]
+                 if seat["seat"] != observed["hero_seat"] and not seat["folded"]]
+    styles = []
+    for seat in opponents:
+        player = state["players"][seat["seat"]]
+        profile = profiles.get(player["name"], {})
+        style = seat["observed_style"]
+        styles.append(style if style != "unknown" else inferred_style(profile))
+    result = advise({"hero": cards, "board": observed["board"], "opponents": len(opponents),
+                     "pot": observed["pot_cents"] / 100, "call": choice["to_call"] / 100,
                      "mode": "normal", "styles": styles})
     if result["action"] == "加注候选" and not choice["can_raise"]:
         result["action"] = "仅跟注或弃牌可选"
@@ -258,18 +260,39 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path == "/":
+        request = urlsplit(self.path)
+        if request.path == "/":
             body = (ROOT / "web" / "index.html").read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
-        elif self.path == "/api/profiles":
+        elif request.path == "/api/profiles":
             self.send_json(200, {"profiles": load_profiles()})
-        elif self.path == "/api/game":
+        elif request.path == "/api/game":
             state = load_game()
             self.send_json(200, {"game": game_view(state) if state else None})
+        elif request.path == "/api/game/observation":
+            try:
+                self.send_json(200, {"observation": policy.observation(load_game(), load_profiles())})
+            except ValueError as error:
+                self.send_json(400, {"error": str(error)})
+        elif request.path == "/api/hands":
+            try:
+                query = parse_qs(request.query)
+                limit = int(query.get("limit", ["10"])[0])
+                before = int(query["before"][0]) if "before" in query else None
+                self.send_json(200, storage.list_hands(ARCHIVE_DB, limit, before))
+            except ValueError as error:
+                self.send_json(400, {"error": str(error)})
+        elif request.path.startswith("/api/hands/"):
+            hand_id = request.path.removeprefix("/api/hands/")
+            if not hand_id or "/" in hand_id or len(hand_id) > 80:
+                self.send_json(400, {"error": "手牌标识无效"})
+                return
+            state = storage.get_hand(ARCHIVE_DB, hand_id)
+            self.send_json(200, {"hand": state}) if state else self.send_error(404)
         else:
             self.send_error(404)
 
@@ -300,6 +323,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    storage.migrate_legacy(ARCHIVE_DB, HAND_HISTORY)
     server = ThreadingHTTPServer(("127.0.0.1", 8765), Handler)
     print("本地原型：http://127.0.0.1:8765")
     server.serve_forever()

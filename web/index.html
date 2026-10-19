@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>纸牌策略模型 · 真实牌局记录</title>
+  <title>FeltLedger · 德州扑克研究记录</title>
   <style>
     :root { font: 15px/1.5 system-ui, sans-serif; color: #e9f4ee; background: #091b18; }
     * { box-sizing: border-box; }
@@ -40,13 +40,18 @@
     .street-title { margin-top: .7rem; color: #eccb7b; font-weight: 700; }
     .fact { margin: .45rem 0; border-left: 3px solid #80c79b; padding-left: .6rem; }
     .setup-row { border-top: 1px solid #426753; padding: .4rem 0; }
+    .research-banner { grid-column: 1 / -1; border: 1px solid #ae9551; background: #3b3423; border-radius: 12px; padding: .75rem 1rem; }
+    .archive-list { display: grid; gap: .3rem; }
+    .archive-list button { text-align: left; width: 100%; }
+    .archive-detail { white-space: pre-wrap; max-height: 260px; overflow: auto; }
     [hidden] { display: none !important; }
     @media (max-width: 850px) { main { display: block; } .table-wrap { min-height: 470px; } .seat { width: 94px; font-size: .72rem; } .seat .playing-card { width: 1.4rem; height: 1.9rem; } .felt { inset: 15% 3%; } }
   </style>
 </head>
 <body>
-  <header><h1>纸牌策略模型 <small>真实牌局记录 · 本地原型</small></h1><span id="top-status">每手由现场重新洗牌；程序只记录已知事实，不自动发牌。</span></header>
+  <header><h1>FeltLedger <small>德州扑克研究记录 · 本地实验原型</small></h1><span id="top-status">每手由现场重新洗牌；程序只记录已知事实，不自动发牌。</span></header>
   <main>
+    <div class="research-banner"><strong>学术研究与实验用途</strong>：记录牌局流程、检验规则和研究不完全信息决策。筹码只作为模型中的计量单位；本软件不提供充值、提现、现金兑换或牌局撮合。实验估算未经收益验证，不用于真钱牌局或线上平台的实时决策辅助。</div>
     <div>
       <section class="card" id="setup">
         <h2>设置牌桌</h2>
@@ -92,7 +97,7 @@
         </div>
         <div id="complete-controls" hidden><p id="result-display"></p><button id="next-hand">下一手（现场重新洗牌）</button></div>
       </section>
-      <section class="card" id="advice-section" hidden><h2>我的决策参考</h2><button id="advice-button">估算当前选择</button><div id="advice-result" class="fact">仅在轮到我且底牌已录入时可估算。策略准确率尚未评测。</div></section>
+      <section class="card" id="advice-section" hidden><h2>实验估算 · 非收益保证</h2><button id="advice-button">计算研究估算</button><div id="advice-result" class="fact">仅在轮到我且底牌已录入时可估算。策略准确率尚未评测；请勿用于真钱牌局的实时决策。</div></section>
     </div>
 
     <aside>
@@ -118,6 +123,7 @@
         <button id="save-cards">保存已知底牌</button><div id="hand-facts"></div>
       </section>
       <section class="card" id="history-section" hidden><h2>逐街行动记录</h2><ol class="timeline" id="history"></ol></section>
+      <section class="card" id="archive-section"><h2>已归档手牌 · 本机数据库</h2><p class="muted small">每页最多 10 手；点击查看事实记录。旧手牌不会随当前牌局一起加载。</p><div class="archive-list" id="archive-list"></div><button class="secondary" id="archive-more" hidden>更早的 10 手</button><button class="secondary" id="archive-latest" hidden>返回最新</button><div class="archive-detail fact" id="archive-detail" hidden></div></section>
       <section class="card"><h2>数据可靠性</h2><p class="fact">底池与筹码：由录入的行动和盲注计算，请与现场核对。</p><p class="fact">胜率：未知对手底牌按随机分布抽样，属于估计值。</p><p class="fact">策略准确率：未评测；不会用胜率冒充建议准确率。</p><p class="muted small">玩法仅覆盖普通无限注德州扑克。鱿鱼规则、抽水、保险、跑多次公共牌等变体暂不纳入。</p></section>
     </aside>
   </main>
@@ -126,6 +132,7 @@
     let state = null;
     let selectedSeat = null;
     let profiles = {};
+    let archiveBefore = null;
     const fmt = cents => (cents / 100).toFixed(2);
     const streetName = {preflop:'翻前',flop:'翻牌',turn:'转牌',river:'河牌'};
     const phaseName = {action:'行动中',board:'等待录入公共牌',showdown:'摊牌',complete:'本手结束'};
@@ -139,8 +146,37 @@
       return data;
     }
     async function command(path, payload={}) {
-      try { const data = await api(path,payload); state = data.game; render(); showMessage('已记录。请核对现场底池、筹码和行动。'); }
+      try { const data = await api(path,payload); state = data.game; render(); showMessage('已记录。请核对现场底池、筹码和行动。'); if(path==='/api/game/next')loadArchive(true); }
       catch (error) { showMessage(error.message,true); }
+    }
+    async function loadArchive(latest=false) {
+      if(latest)archiveBefore=null;
+      try {
+        const url=`/api/hands?limit=10${archiveBefore===null?'':`&before=${archiveBefore}`}`;
+        const response=await fetch(url); const data=await response.json();
+        if(!response.ok)throw Error(data.error||'归档读取失败');
+        $('archive-list').replaceChildren();
+        for(const hand of data.hands){
+          const button=document.createElement('button');button.className='secondary';
+          button.textContent=`${hand.hand_id.slice(0,8)} · ${hand.player_count} 人 · ${hand.result_method} · ${new Date(hand.archived_at).toLocaleString()}`;
+          button.onclick=()=>showArchivedHand(hand.hand_id);$('archive-list').append(button);
+        }
+        if(!data.hands.length)$('archive-list').textContent='暂无已归档手牌。';
+        $('archive-more').hidden=data.next_before===null;
+        $('archive-more').onclick=()=>{archiveBefore=data.next_before;loadArchive();};
+        $('archive-latest').hidden=archiveBefore===null;
+        $('archive-detail').hidden=true;
+      } catch(error) { $('archive-list').textContent=`归档读取失败：${error.message}`; }
+    }
+    async function showArchivedHand(id) {
+      try {
+        const response=await fetch(`/api/hands/${encodeURIComponent(id)}`); const data=await response.json();
+        if(!response.ok||!data.hand)throw Error('手牌不存在');
+        const hand=data.hand,hero=hand.players[hand.hero];
+        const actions=hand.history.map(entry=>`${streetName[entry.street]} · ${entry.seat===null?'牌桌':hand.players[entry.seat].name} · ${kindName[entry.kind]||entry.kind}${entry.cards?' '+entry.cards.join(' '):''}${entry.amount?' '+fmt(entry.amount):''}${entry.to?' → '+fmt(entry.to):''}`);
+        $('archive-detail').textContent=`本手 ${hand.id}\n我的已知底牌：${hero.cards.join(' ')||'未知'}\n公共牌：${hand.board.join(' ')||'未发'}\n结算：${hand.result.method}\n\n${actions.join('\n')}`;
+        $('archive-detail').hidden=false;
+      } catch(error) { $('archive-detail').textContent=error.message;$('archive-detail').hidden=false; }
     }
     function setupRows() {
       const n = Number($('count').value);
@@ -324,10 +360,12 @@
     $('auto-settle').onclick=()=>command('/api/game/settle');
     $('manual-settle').onclick=()=>{const awards={};$('award-fields').querySelectorAll('input').forEach(input=>awards[input.dataset.seat]=input.value);command('/api/game/settle',{awards});};
     $('next-hand').onclick=async()=>{selectedSeat=null;$('profile-section').hidden=true;await command('/api/game/next');};
+    $('archive-latest').onclick=()=>loadArchive(true);
     $('advice-button').onclick=async()=>{try{const r=await api('/api/game/advice');$('advice-result').textContent=`${r.action} · 随机对手摊牌胜率 ${(r.equity*100).toFixed(1)}%（抽样区间 ${(r.equity_interval[0]*100).toFixed(1)}%–${(r.equity_interval[1]*100).toFixed(1)}%，${r.samples} 次）· ${r.call_ev===null?'无需跟注':`简化跟注净期望 ${r.call_ev}`}。对手风格 ${r.effective_styles.join('、')}，仅调整建议阈值 ${(r.style_adjustment*100).toFixed(1)} 个百分点，不改变随机手牌胜率。${r.reason} ${r.disclaimer} ${r.model_accuracy}`;}catch(error){$('advice-result').textContent=error.message;}};
     Promise.all([fetch('/api/game').then(r=>r.json()),fetch('/api/profiles').then(r=>r.json())])
       .then(([gameData,profileData])=>{state=gameData.game;profiles=profileData.profiles||{};render();})
       .catch(error=>showMessage(error.message,true));
+    loadArchive(true);
   </script>
 </body>
 </html>

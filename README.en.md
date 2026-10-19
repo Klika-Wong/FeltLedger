@@ -2,7 +2,7 @@
 
 English · [中文](README.md)
 
-FeltLedger is a local prototype for recording real no-limit Texas hold'em hands. People shuffle and deal a fresh hand at the table; the software records only the cards, actions, and payouts you enter. It does not deal cards. It requires Python 3.10+ and has no third-party dependencies.
+FeltLedger is a prototype for **academic research, rule verification, and non-monetary experiments** involving no-limit Texas hold'em. People shuffle and deal a fresh hand at the table; the software records only the cards, actions, and payouts entered. It does not deal cards, take deposits, allow withdrawals or cash conversion, or arrange games. This release is a single-user local prototype. It requires Python 3.10+ and has no third-party dependencies.
 
 ## Run and use
 
@@ -18,14 +18,27 @@ Open <http://127.0.0.1:8765/>. The server listens only on `127.0.0.1`.
 4. The hand ends immediately when only one player remains. At showdown, the app can rank known hands and distribute side pots if every remaining hand is known. Otherwise, enter the actual payouts observed at the table. Manual payouts are checked for their total only; side-pot eligibility is not verified.
 5. “Next hand” archives the completed hand, moves the button, posts blinds again, and clears all cards. Shuffle and deal the next hand at the real table. “Undo” restores only the latest current-hand operation.
 
-The current hand, opponent profiles, and archived hands are stored locally in `data/current_game.json`, `data/profiles.json`, and `data/hands.jsonl`. Git ignores `data/`. Resetting the table overwrites an unfinished hand after a confirmation prompt.
+The current hand and one-step undo are stored in `data/current_game.json` and `data/undo.json`; opponent profiles are in `data/profiles.json`. Clicking “Next hand” immediately archives the completed hand in `data/archive.sqlite3`. The UI loads ten archive summaries per page, with an option to inspect one hand. Git ignores these data files. Resetting the table overwrites an unfinished hand after a confirmation prompt.
 
 ## Project and use boundaries
 
 - The code and documentation use the [PolyForm Noncommercial License 1.0.0](LICENSE). Noncommercial research, study, and experiments are covered by its terms. **Commercial use, resale, paid services, or other profit-making use require the copyright holder's prior express written permission.** The license restricts commercial use, so this is *source-available* software, not OSI-defined open source.
 - Real hand histories, player names, and profiles in `data/` are not part of the published repository. The software license does not grant permission to share or train on that data. Do not commit this directory, credentials, or identifying information.
 - The current scope is manual recording at a real table and research review. Check each online platform's current rules before any integration. Do not use this project for prohibited real-time assistance or to mine hands you did not play.
+- Experimental estimates are for non-monetary experiments and offline analysis only. **Do not use them for real-money hands or real-time decisions on online platforms.** Research labeling alone does not determine the legal status of a particular use or override platform rules.
 - Current advice offers no profit guarantee. Strategy accuracy, competitive performance, and special game variants have not been validated.
+
+## Database and future deployment boundary
+
+The layers are `game.py` for rules, `policy.py` for the current player's visible `PolicyInput-v1`, and `storage.py` for archived hands. The SQLite `hands` table deduplicates on `hand_id`, pages by increasing `sequence`, and stores archive time, player count, total chips, result method, and a full JSON snapshot. Each completed hand is committed immediately rather than collected in an unbounded JSONL file. SQLite WAL uses automatic checkpoints. Future offline training can stream batches with `storage.iter_hands(batch_size=...)`.
+
+If an older `data/hands.jsonl` exists, startup imports it line by line in transactions of 100 hands and renames the source to `hands.jsonl.migrated` as a backup after success. An interrupted import can be retried without duplicate hand IDs. Back up `data/` before migration. Set `FELTLEDGER_DATA_DIR` to place private data outside the project folder.
+
+`GET /api/hands?limit=10&before=<sequence>` returns archive summaries; `GET /api/hands/<hand_id>` returns one hand; `GET /api/game/observation` returns a versioned current-decision observation when it is your seat's turn. The observation excludes opponents' hidden cards and private notes. Future models should consume this boundary. The [model plan](模型训练与数据适配方案.md) documents input/output versions and integer-cent amounts.
+
+**The server still binds only to `127.0.0.1`. It has no accounts, access controls, or multi-user isolation and must not be exposed directly to the Internet.** A future hosted service should add authentication, user and hand isolation, backup, access audit, and data deletion, and can replace SQLite with a server database while retaining the rules and observation contract. Set performance targets after measuring real data volumes and concurrency.
+
+Proposed hosted schema: `users(id)` owns `sessions(id, owner_id, ruleset_version)` and `profiles(id, owner_id, ...)`; `hands(id, session_id, sequence, archived_at, summary, snapshot_json)` is paged within a session with a unique `(session_id, id)` constraint. Add a derived `hand_actions(hand_id, ordinal, street, seat, action, amount_cents)` table only if training queries need per-action indexing. Preserve original snapshots, ruleset versions, and provenance during migration; the current single-user IDs are not cross-user identities.
 
 ## Standard hand-flow comparison
 
