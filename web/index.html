@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>纸牌策略模型 · 真实牌局记录</title>
+  <style>
+    :root { font: 15px/1.5 system-ui, sans-serif; color: #e9f4ee; background: #091b18; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    header { padding: 1rem max(1rem, calc((100vw - 1280px)/2)); background: #102c26; border-bottom: 1px solid #315c4e; display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; align-items: center; }
+    h1 { font-size: 1.25rem; margin: 0; } h2 { font-size: 1rem; margin: 0 0 .7rem; color: #bce7d0; }
+    small, .muted { color: #a3c4b5; } .small { font-size: .85rem; }
+    main { max-width: 1280px; margin: auto; padding: 1rem; display: grid; grid-template-columns: minmax(0, 1.9fr) minmax(280px, 1fr); gap: 1rem; }
+    .card { background: #14332b; border: 1px solid #336653; border-radius: 12px; padding: 1rem; margin-bottom: 1rem; }
+    .table-wrap { position: relative; min-height: 530px; overflow: hidden; }
+    .felt { position: absolute; inset: 13% 7%; border: 14px solid #54351d; border-radius: 50%; background: radial-gradient(ellipse, #146944, #0c4d35 72%); box-shadow: inset 0 0 0 4px #987448, 0 12px 30px #07110e; }
+    .center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; width: 58%; }
+    .board { display: flex; justify-content: center; gap: .25rem; margin: .7rem 0; }
+    .playing-card { display: inline-flex; width: 2.25rem; height: 3rem; align-items: center; justify-content: center; color: #153027; background: #f8f8f1; border-radius: 5px; font-weight: 800; font-size: 1.05rem; border: 1px solid #d8dccf; }
+    .playing-card.red { color: #b53a3a; } .playing-card.unknown { background: #245b4e; border-color: #78ac96; color: #bce3d0; }
+    .seat { position: absolute; width: 120px; min-height: 80px; padding: .4rem; background: #0b211c; border: 1px solid #638a75; border-radius: 9px; text-align: center; transform: translate(-50%, -50%); font-size: .84rem; }
+    .seat.turn { outline: 3px solid #e9cb6d; } .seat.folded { opacity: .55; }
+    .seat .playing-card { width: 1.7rem; height: 2.2rem; font-size: .82rem; margin: .15rem .1rem 0; }
+    .seat-name { border: 0; background: transparent; padding: 0; margin: 0; font-size: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
+    .seat-name:hover { background: transparent; color: #f6d77b; }
+    .badge { display: inline-block; background: #cfac53; color: #12251c; border-radius: 10px; padding: 0 .4rem; font-weight: 700; font-size: .72rem; }
+    button, input, select { font: inherit; border-radius: 7px; }
+    button { border: 1px solid #8bbca1; background: #226144; color: white; padding: .5rem .8rem; cursor: pointer; margin: .2rem .25rem .2rem 0; }
+    button:hover { background: #307a57; } button:disabled { opacity: .4; cursor: default; }
+    button.secondary { background: #244138; } button.danger { background: #783e37; }
+    input, select { background: #eef6ef; color: #142b20; border: 1px solid #8bbca1; padding: .45rem; max-width: 100%; }
+    input[type=number] { width: 8rem; } input[type=text] { width: 11rem; }
+    label { display: inline-flex; flex-direction: column; gap: .2rem; margin: .35rem .5rem .35rem 0; font-size: .87rem; }
+    .row { display: flex; flex-wrap: wrap; align-items: end; gap: .4rem; }
+    .status { padding: .5rem .7rem; background: #244b3b; border-radius: 7px; margin: .5rem 0; }
+    .error { color: #ffd0bf; background: #61312c; } .good { color: #d9f3de; }
+    .timeline { max-height: 320px; overflow: auto; padding-left: 1.4rem; margin: .5rem 0; }
+    .timeline li { margin: .25rem 0; }
+    .street-title { margin-top: .7rem; color: #eccb7b; font-weight: 700; }
+    .fact { margin: .45rem 0; border-left: 3px solid #80c79b; padding-left: .6rem; }
+    .setup-row { border-top: 1px solid #426753; padding: .4rem 0; }
+    [hidden] { display: none !important; }
+    @media (max-width: 850px) { main { display: block; } .table-wrap { min-height: 470px; } .seat { width: 94px; font-size: .72rem; } .seat .playing-card { width: 1.4rem; height: 1.9rem; } .felt { inset: 15% 3%; } }
+  </style>
+</head>
+<body>
+  <header><h1>纸牌策略模型 <small>真实牌局记录 · 本地原型</small></h1><span id="top-status">每手由现场重新洗牌；程序只记录已知事实，不自动发牌。</span></header>
+  <main>
+    <div>
+      <section class="card" id="setup">
+        <h2>设置牌桌</h2>
+        <div class="row">
+          <label>人数（含我）<select id="count"></select></label>
+          <label>小盲<input id="sb" type="number" min="0.01" step="0.01" value="0.5"></label>
+          <label>大盲<input id="bb" type="number" min="0.01" step="0.01" value="1"></label>
+          <label>前注<input id="ante" type="number" min="0" step="0.01" value="0"></label>
+          <label>牌桌总筹码<input id="total-chips" type="number" min="0.01" step="0.01" value="300"></label>
+          <button class="secondary" id="distribute">按人数均分</button>
+          <label>我的座位<select id="hero-seat"></select></label>
+          <label>庄位（BTN）<select id="button-seat"></select></label>
+        </div>
+        <div id="setup-seats"></div>
+        <p class="muted small" id="stack-sum"></p>
+        <button id="start">开始记录本手</button>
+        <small>真实桌面的牌和行动由你逐步输入；重设牌桌会覆盖当前未完成的手牌。</small>
+      </section>
+
+      <section class="card" id="game-section" hidden>
+        <div class="row"><h2 id="street-heading"></h2><button class="secondary" id="undo">撤销上一步</button><button class="secondary" id="edit-table">重设牌桌</button></div>
+        <div class="table-wrap" aria-label="牌桌示意图"><div class="felt"></div><div class="center"><div id="pot-display"></div><div class="board" id="board-display"></div><small id="table-message"></small></div><div id="seats-display"></div></div>
+        <div class="status" id="game-status"></div>
+      </section>
+
+      <section class="card" id="control-section" hidden>
+        <h2>记录现场行动</h2>
+        <div id="action-controls" hidden>
+          <p id="actor-label"></p>
+          <button id="fold" class="danger">弃牌</button><button id="check">过牌</button><button id="call">跟注</button>
+          <label>下注／加注到（本街总额）<input id="raise-to" type="number" min="0" step="0.01"></label>
+          <button id="raise">下注／加注</button><button id="all-in">全下</button>
+          <p class="muted small" id="raise-hint"></p>
+        </div>
+        <div id="board-controls" hidden>
+          <p id="board-prompt"></p><label>本街新公共牌（例如 As Kd 2c）<input id="new-board" type="text"></label>
+          <button id="save-board">录入公共牌并继续</button>
+        </div>
+        <div id="showdown-controls" hidden>
+          <p>摊牌：亮出的底牌可在右侧录入。全部在局玩家底牌已知时，可按牌型自动结算；有人未亮牌时，按现场实际分池金额手填。</p>
+          <div id="side-pots"></div><button id="auto-settle">按已知牌自动结算</button>
+          <div id="award-fields"></div><button id="manual-settle">按现场金额结算</button>
+        </div>
+        <div id="complete-controls" hidden><p id="result-display"></p><button id="next-hand">下一手（现场重新洗牌）</button></div>
+      </section>
+      <section class="card" id="advice-section" hidden><h2>我的决策参考</h2><button id="advice-button">估算当前选择</button><div id="advice-result" class="fact">仅在轮到我且底牌已录入时可估算。策略准确率尚未评测。</div></section>
+    </div>
+
+    <aside>
+      <section class="card" id="profile-section" hidden>
+        <h2>对手档案 · <span id="profile-seat"></span></h2>
+        <p class="muted small">点牌桌上的名字打开；档案跨局保存在本机。选已有档案会把当前座位关联到该对手。</p>
+        <label>已有档案<select id="profile-select"></select></label>
+        <label>对手姓名／档案名<input id="profile-name" type="text" maxlength="40"></label>
+        <label>风格预设<select id="profile-style">
+          <option value="unknown">未知</option><option value="tag">紧凶</option><option value="lag">松凶</option>
+          <option value="nit">特别紧</option><option value="calling_station">爱跟注</option>
+          <option value="bluffy">爱诈唬</option><option value="tight">紧</option><option value="loose">松</option>
+          <option value="aggressive">激进</option><option value="passive">被动</option>
+        </select></label>
+        <label>现场备注<input id="profile-note" type="text" maxlength="200" placeholder="如：河牌爱跟注"></label>
+        <button id="save-profile">保存并关联此座位</button><button class="secondary" id="close-profile">关闭</button>
+        <p class="muted small" id="profile-stats"></p>
+      </section>
+      <section class="card" id="cards-section" hidden>
+        <h2>事实牌面</h2>
+        <p class="muted small">仅录入现场已看到的牌。未亮底牌显示为“??”；不会猜成事实。</p>
+        <label>座位<select id="card-seat"></select></label><label>两张底牌（未知可留空）<input id="hole-cards" type="text" placeholder="As Kd"></label>
+        <button id="save-cards">保存已知底牌</button><div id="hand-facts"></div>
+      </section>
+      <section class="card" id="history-section" hidden><h2>逐街行动记录</h2><ol class="timeline" id="history"></ol></section>
+      <section class="card"><h2>数据可靠性</h2><p class="fact">底池与筹码：由录入的行动和盲注计算，请与现场核对。</p><p class="fact">胜率：未知对手底牌按随机分布抽样，属于估计值。</p><p class="fact">策略准确率：未评测；不会用胜率冒充建议准确率。</p><p class="muted small">玩法仅覆盖普通无限注德州扑克。鱿鱼规则、抽水、保险、跑多次公共牌等变体暂不纳入。</p></section>
+    </aside>
+  </main>
+  <script>
+    const $ = id => document.getElementById(id);
+    let state = null;
+    let selectedSeat = null;
+    let profiles = {};
+    const fmt = cents => (cents / 100).toFixed(2);
+    const streetName = {preflop:'翻前',flop:'翻牌',turn:'转牌',river:'河牌'};
+    const phaseName = {action:'行动中',board:'等待录入公共牌',showdown:'摊牌',complete:'本手结束'};
+    const kindName = {ante:'前注',small_blind:'小盲',big_blind:'大盲',fold:'弃牌',check:'过牌',call:'跟注',bet:'下注',raise:'加注',uncalled_return:'未跟注额退回',win_by_fold:'弃牌获胜',board:'公共牌',showdown:'摊牌'};
+    function cardsFrom(text) { return text.trim() ? text.trim().split(/\s+/) : []; }
+    function showMessage(message, error=false) { $('game-status').textContent = message; $('game-status').className = error ? 'status error' : 'status'; }
+    async function api(path, payload={}) {
+      const response = await fetch(path, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const data = await response.json();
+      if (!response.ok) throw Error(data.error || '请求失败');
+      return data;
+    }
+    async function command(path, payload={}) {
+      try { const data = await api(path,payload); state = data.game; render(); showMessage('已记录。请核对现场底池、筹码和行动。'); }
+      catch (error) { showMessage(error.message,true); }
+    }
+    function setupRows() {
+      const n = Number($('count').value);
+      const old = [...$('setup-seats').querySelectorAll('.setup-row')].map(row => ({name:row.querySelector('.name').value,stack:row.querySelector('.stack').value}));
+      $('setup-seats').replaceChildren();
+      $('hero-seat').replaceChildren(); $('button-seat').replaceChildren();
+      for (let i=0;i<n;i++) {
+        const row = document.createElement('div'); row.className='setup-row';
+        const name=document.createElement('input'); name.className='name'; name.type='text'; name.maxLength=40; name.value=old[i]?.name || (i===0?'我':`对手${i}`);
+        const stack=document.createElement('input'); stack.className='stack'; stack.type='number'; stack.step='0.01'; stack.min='0.01'; stack.value=old[i]?.stack || '100';
+        row.append(`座位 ${i+1}　昵称 `,name,'　筹码 ',stack); $('setup-seats').append(row);
+        stack.oninput=updateStackSum;
+        $('hero-seat').add(new Option(`座位 ${i+1}`,i)); $('button-seat').add(new Option(`座位 ${i+1}`,i));
+      }
+      updateStackSum();
+    }
+    function updateStackSum() {
+      const sum=[...$('setup-seats').querySelectorAll('.stack')].reduce((total,input)=>total+(Number(input.value)||0),0);
+      $('stack-sum').textContent=`当前座位合计 ${sum.toFixed(2)}；开局时必须等于牌桌总筹码 ${Number($('total-chips').value||0).toFixed(2)}。`;
+    }
+    function fillSetupFromState() {
+      $('count').value=state.players.length; setupRows();
+      $('sb').value=fmt(state.small_blind); $('bb').value=fmt(state.big_blind); $('ante').value=fmt(state.ante);
+      $('total-chips').value=fmt(state.table_total);
+      $('hero-seat').value=state.hero; $('button-seat').value=state.button;
+      [...$('setup-seats').querySelectorAll('.setup-row')].forEach((row,i)=>{ row.querySelector('.name').value=state.players[i].name; row.querySelector('.stack').value=fmt(state.phase==='complete'?state.players[i].stack:state.players[i].start_stack); });
+      updateStackSum();
+    }
+    function cardNode(value) {
+      const el=document.createElement('span'); el.className='playing-card'+(!value?' unknown':/[hd]$/.test(value)?' red':'');
+      el.textContent=value || '??'; return el;
+    }
+    function drawTable() {
+      $('pot-display').textContent=`底池 ${fmt(state.pot)} · 当前街 ${streetName[state.street]}`;
+      $('board-display').replaceChildren();
+      for(let i=0;i<5;i++) $('board-display').append(cardNode(state.board[i]));
+      $('seats-display').replaceChildren();
+      const n=state.players.length;
+      state.players.forEach((p,i)=>{
+        const relative=(i-state.hero+n)%n; const angle=Math.PI/2 + 2*Math.PI*relative/n;
+        const x=50+34*Math.cos(angle), y=50+31*Math.sin(angle);
+        const seat=document.createElement('div'); seat.className='seat'+(p.folded?' folded':'')+(state.legal?.seat===i?' turn':'');
+        seat.style.left=`${x}%`; seat.style.top=`${y}%`;
+        const label=document.createElement('button'); label.className='seat-name'; label.textContent=`${i+1}. ${p.name}${i===state.hero?'（我）':''}`;
+        label.title='查看或修改此座位的对手档案'; label.onclick=()=>openProfile(i);
+        const tags=document.createElement('div');
+        if(i===state.button){const b=document.createElement('span');b.className='badge';b.textContent='BTN';tags.append(b,' ');}
+        if(i===state.small_blind_seat)tags.append('SB ');
+        if(i===state.big_blind_seat)tags.append('BB ');
+        const chips=document.createElement('div');chips.textContent=`筹码 ${fmt(p.stack)} · 本街 ${fmt(p.street_bet)}`;
+        const status=document.createElement('div');status.textContent=p.folded?'已弃牌':p.stack===0?'全下':'在局';
+        const cards=document.createElement('div'); cards.append(cardNode(p.cards[0]),cardNode(p.cards[1]));
+        seat.append(label,tags,chips,status,cards);$('seats-display').append(seat);
+      });
+      $('table-message').textContent='真实牌局：每手由现场洗牌，未知底牌保持隐藏';
+    }
+    function drawHistory() {
+      $('history').replaceChildren();
+      let lastStreet='';
+      state.history.forEach(entry=>{
+        if(entry.street!==lastStreet){const li=document.createElement('li');li.className='street-title';li.textContent=streetName[entry.street];$('history').append(li);lastStreet=entry.street;}
+        const li=document.createElement('li');const who=entry.seat===null?'牌桌':state.players[entry.seat].name;
+        li.textContent=`${who} · ${kindName[entry.kind]||entry.kind}`+(entry.cards?` ${entry.cards.join(' ')}`:entry.amount?` ${fmt(entry.amount)}`:'')+(entry.to?` → ${fmt(entry.to)}`:'');
+        $('history').append(li);
+      });
+      $('history').scrollTop=$('history').scrollHeight;
+    }
+    function drawCards() {
+      const previous=$('card-seat').value;
+      $('card-seat').replaceChildren();
+      state.players.forEach((p,i)=>$('card-seat').add(new Option(`${i+1}. ${p.name}`,i)));
+      $('card-seat').value=previous && Number(previous)<state.players.length?previous:String(state.hero);
+      $('hole-cards').value=state.players[Number($('card-seat').value)].cards.join(' ');
+      $('save-cards').disabled=state.phase==='complete';
+      $('hand-facts').replaceChildren();
+      for(const [seat,fact] of Object.entries(state.facts)){
+        const p=document.createElement('p');p.className='fact';p.textContent=`${state.players[Number(seat)].name} 已知最佳五张：${fact.name} · ${fact.cards.join(' ')}`;$('hand-facts').append(p);
+      }
+    }
+    async function refreshProfiles() {
+      const response=await fetch('/api/profiles'); const data=await response.json(); profiles=data.profiles || {};
+      if(selectedSeat!==null)drawProfile();
+    }
+    function openProfile(seat) { selectedSeat=seat; $('profile-section').hidden=false; drawProfile(); $('profile-section').scrollIntoView({block:'nearest'}); }
+    function drawProfile() {
+      if(selectedSeat===null||!state)return;
+      const name=state.players[selectedSeat].name;
+      $('profile-seat').textContent=`座位 ${selectedSeat+1}`;
+      $('profile-select').replaceChildren(); $('profile-select').add(new Option('新建／使用当前名字',''));
+      Object.keys(profiles).sort().forEach(key=>$('profile-select').add(new Option(key,key)));
+      $('profile-select').value=profiles[name]?name:'';
+      $('profile-name').value=name;
+      $('profile-style').value=profiles[name]?.style || 'unknown';
+      $('profile-note').value=profiles[name]?.note || '';
+      drawProfileStats(name);
+    }
+    function drawProfileStats(name) {
+      const p=profiles[name];
+      $('profile-stats').textContent=p?.hands?`已记录 ${p.hands} 手 · VPIP ${(100*p.vpip/p.hands).toFixed(0)}% · PFR ${(100*p.pfr/p.hands).toFixed(0)}%`:'尚无行动样本；手动风格可立即保存。';
+    }
+    function drawControls() {
+      for(const id of ['action-controls','board-controls','showdown-controls','complete-controls'])$(id).hidden=true;
+      if(state.phase==='action'){
+        $('action-controls').hidden=false;
+        const l=state.legal,p=state.players[l.seat];
+        $('actor-label').textContent=`轮到 ${p.name}（座位 ${l.seat+1}）· 需跟注 ${fmt(l.to_call)} · 剩余筹码 ${fmt(p.stack)}`;
+        $('check').disabled=!l.can_check;$('call').disabled=l.can_check;
+        $('raise').disabled=!l.can_raise;
+        $('all-in').disabled=!l.can_raise && l.max_to>state.current_bet;
+        $('raise-to').min=fmt(l.min_raise_to);$('raise-to').max=fmt(l.max_to);
+        $('raise-to').value=fmt(Math.min(l.min_raise_to,l.max_to));
+        $('raise-hint').textContent=`最小下注／加注到 ${fmt(l.min_raise_to)}；最大到 ${fmt(l.max_to)}。不足最小额时只能全下。`;
+      } else if(state.phase==='board'){
+        $('board-controls').hidden=false;
+        $('board-prompt').textContent=`${streetName[state.street]}：请录入现场新发的 ${state.street==='flop'?3:1} 张公共牌。`;
+        $('new-board').value='';
+      } else if(state.phase==='showdown'){
+        $('showdown-controls').hidden=false;
+        $('side-pots').textContent=state.side_pots.map((p,i)=>`${i===0?'主池':`边池${i}`} ${fmt(p.amount)}（可获奖：${p.eligible.map(s=>state.players[s].name).join('、')}）`).join('；');
+        $('award-fields').replaceChildren();
+        state.players.forEach((p,i)=>{if(p.folded)return;const label=document.createElement('label');label.textContent=`${p.name} 实际获奖`;const input=document.createElement('input');input.type='number';input.min='0';input.step='0.01';input.value='0';input.dataset.seat=i;label.append(input);$('award-fields').append(label);});
+      } else {
+        $('complete-controls').hidden=false;
+        const awards=Object.entries(state.result.awards).map(([s,v])=>`${state.players[Number(s)].name} +${fmt(v)}`).join('、');
+        $('result-display').textContent=`${state.result.method==='verified_cards'?'已按亮牌自动结算':state.result.method==='manual_unverified'?'按现场手填金额结算（未核验边池资格）':'其余人弃牌'}：${awards}`;
+      }
+      $('advice-section').hidden=!(state.phase==='action'&&state.legal?.seat===state.hero&&state.players[state.hero].cards.length===2);
+    }
+    function render() {
+      const exists=!!state;
+      $('setup').hidden=exists;$('game-section').hidden=!exists;$('control-section').hidden=!exists;
+      $('cards-section').hidden=!exists;$('history-section').hidden=!exists;
+      if(!exists)return;
+      if(selectedSeat!==null && selectedSeat>=state.players.length){selectedSeat=null;$('profile-section').hidden=true;}
+      $('street-heading').textContent=`${streetName[state.street]} · ${phaseName[state.phase]}`;
+      drawTable();drawHistory();drawCards();drawControls();
+      if(selectedSeat!==null)drawProfile();
+      $('top-status').textContent=`本手 ${state.id.slice(0,8)} · ${streetName[state.street]} · ${phaseName[state.phase]}`;
+    }
+    for(let i=2;i<=9;i++)$('count').add(new Option(`${i} 人`,i));$('count').value='3';
+    $('count').onchange=()=>{setupRows();$('distribute').click();};setupRows();
+    $('total-chips').oninput=updateStackSum;
+    $('distribute').onclick=()=>{
+      const inputs=[...$('setup-seats').querySelectorAll('.stack')];
+      const total=Math.round(Number($('total-chips').value)*100);
+      if(!Number.isSafeInteger(total)||total<inputs.length){showMessage('总筹码至少应为每人 0.01',true);return;}
+      const each=Math.floor(total/inputs.length);
+      inputs.forEach((input,i)=>input.value=((each+(i<total%inputs.length?1:0))/100).toFixed(2));
+      updateStackSum();
+    };
+    $('start').onclick=async()=>{
+      selectedSeat=null;$('profile-section').hidden=true;
+      const payload={players:[...$('setup-seats').querySelectorAll('.setup-row')].map(row=>({name:row.querySelector('.name').value,stack:row.querySelector('.stack').value})),
+        small_blind:$('sb').value,big_blind:$('bb').value,ante:$('ante').value,total_chips:$('total-chips').value,
+        hero:Number($('hero-seat').value),button:Number($('button-seat').value)};
+      if(state&&state.phase!=='complete'){
+        if(!confirm('当前手牌未结束。确认覆盖并重设牌桌吗？'))return;
+        payload.force=true;
+      }
+      await command('/api/game/start',payload);
+    };
+    $('edit-table').onclick=()=>{fillSetupFromState();$('setup').hidden=false;};
+    $('profile-select').onchange=()=>{
+      const name=$('profile-select').value;
+      if(name){$('profile-name').value=name;$('profile-style').value=profiles[name]?.style||'unknown';$('profile-note').value=profiles[name]?.note||'';}
+      drawProfileStats(name || $('profile-name').value);
+    };
+    $('profile-name').oninput=()=>drawProfileStats($('profile-name').value.trim());
+    $('save-profile').onclick=async()=>{
+      await command('/api/game/profile',{seat:selectedSeat,name:$('profile-name').value,style:$('profile-style').value,note:$('profile-note').value});
+      await refreshProfiles();
+    };
+    $('close-profile').onclick=()=>{$('profile-section').hidden=true;selectedSeat=null;};
+    $('undo').onclick=()=>command('/api/game/undo');
+    for(const action of ['fold','check','call'])$(action).onclick=()=>command('/api/game/action',{action});
+    $('raise').onclick=()=>command('/api/game/action',{action:'raise_to',amount:$('raise-to').value});
+    $('all-in').onclick=()=>command('/api/game/action',{action:'all_in'});
+    $('save-board').onclick=()=>command('/api/game/board',{cards:cardsFrom($('new-board').value)});
+    $('card-seat').onchange=()=>{$('hole-cards').value=state.players[Number($('card-seat').value)].cards.join(' ');};
+    $('save-cards').onclick=()=>command('/api/game/cards',{seat:Number($('card-seat').value),cards:cardsFrom($('hole-cards').value)});
+    $('auto-settle').onclick=()=>command('/api/game/settle');
+    $('manual-settle').onclick=()=>{const awards={};$('award-fields').querySelectorAll('input').forEach(input=>awards[input.dataset.seat]=input.value);command('/api/game/settle',{awards});};
+    $('next-hand').onclick=async()=>{selectedSeat=null;$('profile-section').hidden=true;await command('/api/game/next');};
+    $('advice-button').onclick=async()=>{try{const r=await api('/api/game/advice');$('advice-result').textContent=`${r.action} · 随机对手摊牌胜率 ${(r.equity*100).toFixed(1)}%（抽样区间 ${(r.equity_interval[0]*100).toFixed(1)}%–${(r.equity_interval[1]*100).toFixed(1)}%，${r.samples} 次）· ${r.call_ev===null?'无需跟注':`简化跟注净期望 ${r.call_ev}`}。对手风格 ${r.effective_styles.join('、')}，仅调整建议阈值 ${(r.style_adjustment*100).toFixed(1)} 个百分点，不改变随机手牌胜率。${r.reason} ${r.disclaimer} ${r.model_accuracy}`;}catch(error){$('advice-result').textContent=error.message;}};
+    Promise.all([fetch('/api/game').then(r=>r.json()),fetch('/api/profiles').then(r=>r.json())])
+      .then(([gameData,profileData])=>{state=gameData.game;profiles=profileData.profiles||{};render();})
+      .catch(error=>showMessage(error.message,true));
+  </script>
+</body>
+</html>
