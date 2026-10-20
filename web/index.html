@@ -28,12 +28,17 @@
     button, input, select { font: inherit; border-radius: 7px; }
     button { border: 1px solid #8bbca1; background: #226144; color: white; padding: .5rem .8rem; cursor: pointer; margin: .2rem .25rem .2rem 0; }
     button:hover { background: #307a57; } button:disabled { opacity: .4; cursor: default; }
+    button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #f5d889; outline-offset: 2px; }
     button.secondary { background: #244138; } button.danger { background: #783e37; }
     input, select { background: #eef6ef; color: #142b20; border: 1px solid #8bbca1; padding: .45rem; max-width: 100%; }
     input[type=number] { width: 8rem; } input[type=text] { width: 11rem; }
     label { display: inline-flex; flex-direction: column; gap: .2rem; margin: .35rem .5rem .35rem 0; font-size: .87rem; }
     .row { display: flex; flex-wrap: wrap; align-items: end; gap: .4rem; }
     .status { padding: .5rem .7rem; background: #244b3b; border-radius: 7px; margin: .5rem 0; }
+    body.busy button { pointer-events: none; opacity: .6; }
+    .next-step { border-color: #b89b54; background: #214633; }
+    .next-step h2 { color: #f5d889; }
+    .action-label { font-size: 1.05rem; font-weight: 700; margin: .3rem 0 .7rem; }
     .error { color: #ffd0bf; background: #61312c; } .good { color: #d9f3de; }
     .timeline { max-height: 320px; overflow: auto; padding-left: 1.4rem; margin: .5rem 0; }
     .timeline li { margin: .25rem 0; }
@@ -46,6 +51,13 @@
     .archive-detail { white-space: pre-wrap; max-height: 260px; overflow: auto; }
     [hidden] { display: none !important; }
     @media (max-width: 850px) { main { display: block; } .table-wrap { min-height: 470px; } .seat { width: 94px; font-size: .72rem; } .seat .playing-card { width: 1.4rem; height: 1.9rem; } .felt { inset: 15% 3%; } }
+    @media (max-width: 560px) {
+      .table-wrap { display: grid; gap: .7rem; min-height: 0; }
+      .felt { display: none; }
+      .center { position: static; transform: none; width: auto; padding: .7rem; border-radius: 10px; background: #146944; }
+      #seats-display { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
+      .seat { position: static; transform: none; width: auto; min-width: 0; }
+    }
   </style>
 </head>
 <body>
@@ -62,30 +74,27 @@
           <label>前注<input id="ante" type="number" min="0" step="0.01" value="0"></label>
           <label>每人初始筹码<input id="initial-stack" type="number" min="0.01" step="0.01" value="100"></label>
           <button class="secondary" id="apply-stack">填入所有座位</button>
-          <label>牌桌筹码合计（自动）<input id="total-chips" type="number" value="300" readonly></label>
+          <label>牌桌筹码合计（自动）<input id="total-chips" type="text" value="300.00" readonly></label>
           <label>我的座位<select id="hero-seat"></select></label>
           <label>庄位（BTN）<select id="button-seat"></select></label>
         </div>
         <div id="setup-seats"></div>
         <p class="muted small" id="stack-sum"></p>
         <p class="muted small">默认所有人使用相同初始筹码；若现场筹码不同，只改下方对应座位。合计会自动更新。</p>
-        <button id="start">开始记录本手</button>
+        <button id="start">开始记录本手</button><button class="secondary" id="cancel-setup" hidden>取消重设，返回牌局</button>
+        <p id="setup-feedback" class="status" role="status" hidden></p>
+        <div id="overwrite-confirm" class="status error" hidden>当前手牌尚未结束。应用新设置会覆盖当前记录。
+          <button class="danger" id="confirm-overwrite">确认覆盖并重设</button><button class="secondary" id="keep-hand">返回当前牌局</button>
+        </div>
         <small>真实桌面的牌和行动由你逐步输入；重设牌桌会覆盖当前未完成的手牌。</small>
       </section>
 
-      <section class="card" id="game-section" hidden>
-        <div class="row"><h2 id="street-heading"></h2><button class="secondary" id="undo">撤销上一步</button><button class="secondary" id="edit-table">重设牌桌</button></div>
-        <div class="table-wrap" aria-label="牌桌示意图"><div class="felt"></div><div class="center"><div id="pot-display"></div><div class="board" id="board-display"></div><small id="table-message"></small></div><div id="seats-display"></div></div>
-        <div class="status" id="game-status"></div>
-      </section>
-
-      <section class="card" id="control-section" hidden>
-        <h2>记录现场行动</h2>
+      <section class="card next-step" id="control-section" hidden>
+        <h2>当前步骤</h2>
         <div id="action-controls" hidden>
-          <p id="actor-label"></p>
-          <button id="fold" class="danger">弃牌</button><button id="check">过牌</button><button id="call">跟注</button>
-          <label>下注／加注到（本街总额）<input id="raise-to" type="number" min="0" step="0.01"></label>
-          <button id="raise">下注／加注</button><button id="all-in">全下</button>
+          <p id="actor-label" class="action-label"></p>
+          <div class="row"><button id="fold" class="danger">弃牌</button><button id="check">过牌</button><button id="call">跟注</button><button id="all-in">全下</button></div>
+          <div class="row"><label>下注／加注到（本街总额）<input id="raise-to" type="number" min="0" step="0.01"></label><button id="raise">下注／加注</button></div>
           <p class="muted small" id="raise-hint"></p>
         </div>
         <div id="board-controls" hidden>
@@ -98,6 +107,12 @@
           <div id="award-fields"></div><button id="manual-settle">按现场金额结算</button>
         </div>
         <div id="complete-controls" hidden><p id="result-display"></p><button id="next-hand">下一手（现场重新洗牌）</button></div>
+        <div class="status" id="game-status" role="status" hidden></div>
+      </section>
+
+      <section class="card" id="game-section" hidden>
+        <div class="row"><h2 id="street-heading"></h2><button class="secondary" id="undo">撤销上一步</button><button class="secondary" id="edit-table">重设牌桌</button></div>
+        <div class="table-wrap" aria-label="牌桌示意图"><div class="felt"></div><div class="center"><div id="pot-display"></div><div class="board" id="board-display"></div><small id="table-message"></small></div><div id="seats-display"></div></div>
       </section>
       <section class="card" id="advice-section" hidden><h2>实验估算 · 非收益保证</h2><button id="advice-button">计算研究估算</button><div id="advice-result" class="fact">仅在轮到我且底牌已录入时可估算。策略准确率尚未评测；请勿用于真钱牌局的实时决策。</div></section>
     </div>
@@ -135,12 +150,16 @@
     let selectedSeat = null;
     let profiles = {};
     let archiveBefore = null;
+    let commandPending = false;
     const fmt = cents => (cents / 100).toFixed(2);
     const streetName = {preflop:'翻前',flop:'翻牌',turn:'转牌',river:'河牌'};
     const phaseName = {action:'行动中',board:'等待录入公共牌',showdown:'摊牌',complete:'本手结束'};
     const kindName = {ante:'前注',small_blind:'小盲',big_blind:'大盲',fold:'弃牌',check:'过牌',call:'跟注',bet:'下注',raise:'加注',uncalled_return:'未跟注额退回',win_by_fold:'弃牌获胜',board:'公共牌',showdown:'摊牌'};
     function cardsFrom(text) { return text.trim() ? text.trim().split(/\s+/) : []; }
-    function showMessage(message, error=false) { $('game-status').textContent = message; $('game-status').className = error ? 'status error' : 'status'; }
+    function showMessage(message, error=false) {
+      const target=$('setup').hidden?$('game-status'):$('setup-feedback');
+      target.textContent=message;target.className=error?'status error':'status';target.hidden=false;
+    }
     async function api(path, payload={}) {
       const response = await fetch(path, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       const data = await response.json();
@@ -148,8 +167,11 @@
       return data;
     }
     async function command(path, payload={}) {
-      try { const data = await api(path,payload); state = data.game; render(); showMessage('已记录。请核对现场底池、筹码和行动。'); if(path==='/api/game/next')loadArchive(true); }
+      if(commandPending)return;
+      commandPending=true;document.body.classList.add('busy');showMessage('正在保存…');
+      try { const data = await api(path,payload); state = data.game; render(); showMessage(path==='/api/game/undo'?'已撤销上一步。':path==='/api/game/next'?'下一手已开始，请按现场重新录入牌和行动。':'已记录。请核对现场底池、筹码和行动。'); if(path==='/api/game/next')loadArchive(true); }
       catch (error) { showMessage(error.message,true); }
+      finally {commandPending=false;document.body.classList.remove('busy');}
     }
     async function loadArchive(latest=false) {
       if(latest)archiveBefore=null;
@@ -188,8 +210,8 @@
       $('hero-seat').replaceChildren(); $('button-seat').replaceChildren();
       for (let i=0;i<n;i++) {
         const row = document.createElement('div'); row.className='setup-row';
-        const name=document.createElement('input'); name.className='name'; name.type='text'; name.maxLength=40; name.value=old[i]?.name ?? (i===0?'我':`对手${i}`);
-        const stack=document.createElement('input'); stack.className='stack'; stack.type='number'; stack.step='0.01'; stack.min='0.01'; stack.value=old[i]?.stack ?? $('initial-stack').value;
+        const name=document.createElement('input'); name.className='name'; name.type='text'; name.maxLength=40; name.ariaLabel=`座位 ${i+1} 昵称`; name.value=old[i]?.name ?? (i===0?'我':`对手${i}`);
+        const stack=document.createElement('input'); stack.className='stack'; stack.type='number'; stack.step='0.01'; stack.min='0.01'; stack.ariaLabel=`座位 ${i+1} 初始筹码`; stack.value=old[i]?.stack ?? $('initial-stack').value;
         row.append(`座位 ${i+1}　昵称 `,name,'　筹码 ',stack); $('setup-seats').append(row);
         stack.oninput=updateStackSum;
         $('hero-seat').add(new Option(`座位 ${i+1}`,i)); $('button-seat').add(new Option(`座位 ${i+1}`,i));
@@ -199,6 +221,8 @@
       updateStackSum();
     }
     function updateStackSum() {
+      $('setup-feedback').hidden=true;
+      $('overwrite-confirm').hidden=true;
       const values=[...$('setup-seats').querySelectorAll('.stack')].map(input=>input.value);
       if(values.some(value=>!/^\d+(\.\d{1,2})?$/.test(value)||Number(value)<=0)){
         $('total-chips').value='';$('stack-sum').textContent='请为每个座位填写大于 0、最多两位小数的初始筹码。';return;
@@ -237,7 +261,7 @@
         if(i===state.small_blind_seat)tags.append('SB ');
         if(i===state.big_blind_seat)tags.append('BB ');
         const chips=document.createElement('div');chips.textContent=`筹码 ${fmt(p.stack)} · 本街 ${fmt(p.street_bet)}`;
-        const status=document.createElement('div');status.textContent=p.folded?'已弃牌':p.stack===0?'全下':'在局';
+        const status=document.createElement('div');status.textContent=p.folded?'已弃牌':p.stack===0?(state.phase==='complete'?'已出局':'全下'):'在局';
         const cards=document.createElement('div'); cards.append(cardNode(p.cards[0]),cardNode(p.cards[1]));
         seat.append(label,tags,chips,status,cards);$('seats-display').append(seat);
       });
@@ -292,13 +316,14 @@
       if(state.phase==='action'){
         $('action-controls').hidden=false;
         const l=state.legal,p=state.players[l.seat];
-        $('actor-label').textContent=`轮到 ${p.name}（座位 ${l.seat+1}）· 需跟注 ${fmt(l.to_call)} · 剩余筹码 ${fmt(p.stack)}`;
+        $('actor-label').textContent=`轮到 ${p.name}（座位 ${l.seat+1}）· ${l.can_check?'可过牌':`可跟注 ${fmt(l.to_call)}`} · 剩余筹码 ${fmt(p.stack)}`;
         $('check').disabled=!l.can_check;$('call').disabled=l.can_check;
         $('raise').disabled=!l.can_raise;
         $('all-in').disabled=!l.can_raise && l.max_to>state.current_bet;
+        $('raise-to').disabled=!l.can_raise;
         $('raise-to').min=fmt(l.min_raise_to);$('raise-to').max=fmt(l.max_to);
         $('raise-to').value=fmt(Math.min(l.min_raise_to,l.max_to));
-        $('raise-hint').textContent=`最小下注／加注到 ${fmt(l.min_raise_to)}；最大到 ${fmt(l.max_to)}。不足最小额时只能全下。`;
+        $('raise-hint').textContent=l.can_raise?`最小下注／加注到 ${fmt(l.min_raise_to)}；最大到 ${fmt(l.max_to)}。不足最小额时只能全下。`:'当前不可下注／加注；可用的行动以上方按钮为准。';
       } else if(state.phase==='board'){
         $('board-controls').hidden=false;
         $('board-prompt').textContent=`${streetName[state.street]}：请录入现场新发的 ${state.street==='flop'?3:1} 张公共牌。`;
@@ -317,7 +342,7 @@
     }
     function render() {
       const exists=!!state;
-      $('setup').hidden=exists;$('game-section').hidden=!exists;$('control-section').hidden=!exists;
+      $('setup').hidden=exists;$('cancel-setup').hidden=!exists;$('game-section').hidden=!exists;$('control-section').hidden=!exists;
       $('cards-section').hidden=!exists;$('history-section').hidden=!exists;
       if(!exists)return;
       if(selectedSeat!==null && selectedSeat>=state.players.length){selectedSeat=null;$('profile-section').hidden=true;}
@@ -334,18 +359,29 @@
       updateStackSum();
     };
     $('initial-stack').onchange=()=>$('apply-stack').click();
-    $('start').onclick=async()=>{
-      selectedSeat=null;$('profile-section').hidden=true;
+    async function startRecord(force=false) {
+      updateStackSum();
+      if(!$('total-chips').value){showMessage('请先修正各座位的初始筹码。',true);return;}
       const payload={players:[...$('setup-seats').querySelectorAll('.setup-row')].map(row=>({name:row.querySelector('.name').value,stack:row.querySelector('.stack').value})),
         small_blind:$('sb').value,big_blind:$('bb').value,ante:$('ante').value,total_chips:$('total-chips').value,
         hero:Number($('hero-seat').value),button:Number($('button-seat').value)};
       if(state&&state.phase!=='complete'){
-        if(!confirm('当前手牌未结束。确认覆盖并重设牌桌吗？'))return;
+        if(!force){$('overwrite-confirm').hidden=false;return;}
         payload.force=true;
       }
+      selectedSeat=null;$('profile-section').hidden=true;
       await command('/api/game/start',payload);
+    }
+    $('start').onclick=()=>startRecord();
+    $('confirm-overwrite').onclick=()=>startRecord(true);
+    $('edit-table').onclick=()=>{
+      fillSetupFromState();$('setup-feedback').hidden=true;$('start').textContent='应用新牌桌设置';
+      $('setup').hidden=false;
+      for(const id of ['game-section','control-section','cards-section','history-section','advice-section','profile-section'])$(id).hidden=true;
+      $('setup').scrollIntoView({block:'start'});
     };
-    $('edit-table').onclick=()=>{fillSetupFromState();$('setup').hidden=false;};
+    $('cancel-setup').onclick=()=>{selectedSeat=null;$('overwrite-confirm').hidden=true;render();$('control-section').scrollIntoView({block:'start'});};
+    $('keep-hand').onclick=()=>$('cancel-setup').click();
     $('profile-select').onchange=()=>{
       const name=$('profile-select').value;
       if(name){$('profile-name').value=name;$('profile-style').value=profiles[name]?.style||'unknown';$('profile-note').value=profiles[name]?.note||'';}
